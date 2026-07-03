@@ -25,7 +25,8 @@ numpy = ["numpy>=1.21"]
 dev = ["pyarrow>=10.0.0", "numpy>=1.21", "pytest>=7.0"]
 
 [project.urls]
-Homepage = "https://github.com/iopsystems/h2histogram-py"
+Homepage = "https://h2histogram.org"
+Documentation = "https://h2histogram.org"
 Repository = "https://github.com/iopsystems/h2histogram-py"
 Issues = "https://github.com/iopsystems/h2histogram-py/issues"
 Reference = "https://github.com/iopsystems/histogram"
