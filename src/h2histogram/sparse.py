@@ -112,6 +112,12 @@ class SparseHistogram:
             h.buckets[i] = c
         return h
 
+    def to_cumulative(self):
+        """Convert to a read-only :class:`CumulativeHistogram`."""
+        from .cumulative import CumulativeHistogram
+
+        return CumulativeHistogram.from_sparse(self)
+
     # ------------------------------------------------------------------
     # Percentiles
     # ------------------------------------------------------------------

@@ -56,6 +56,22 @@ coarse = h.downsample(4)        # fewer buckets, higher error, same total count
 sparse = h.to_sparse()          # columnar (index, count) form for storage
 ```
 
+### Fast repeated quantile queries
+
+For a snapshot you'll query many times, convert to a `CumulativeHistogram`
+(the crate's `CumulativeROHistogram`). It stores non-zero buckets with
+**cumulative** counts, so percentiles are answered with a binary search, and it
+precomputes a midpoint-estimated `mean`:
+
+```python
+c = h.to_cumulative()           # read-only; also SparseHistogram.to_cumulative()
+c.percentile(0.99)              # O(log n) binary search -> Bucket (individual count)
+c.mean()                        # midpoint-estimated mean, computed once
+c.bucket_quantile_range(0)      # (lower, upper) quantile fraction of a stored bucket
+for bucket, lo, hi in c.iter_with_quantiles():
+    ...                         # each non-zero bucket with its quantile span
+```
+
 ## Reading histograms from a Rezolus Parquet file
 
 Rezolus writes one row per sample interval. Histogram metrics are stored as a dense
@@ -117,8 +133,9 @@ See the runnable examples in [`examples/`](examples):
 | Type | Purpose |
 |------|---------|
 | `Config` | Bucketing parameters; `value_to_index`, `index_to_range`, `total_buckets`, `error` |
-| `Histogram` | Dense histogram; `increment`, `record`, `record_many`, `percentile(s)`, `merge`, `subtract`, `downsample`, `to_sparse`, `from_buckets` |
-| `SparseHistogram` | Columnar `(index, count)` form; `from_histogram`, `from_parts`, `to_dense` |
+| `Histogram` | Dense histogram; `increment`, `record`, `record_many`, `percentile(s)`, `merge`, `subtract`, `downsample`, `to_sparse`, `to_cumulative`, `from_buckets` |
+| `SparseHistogram` | Columnar `(index, count)` form; `from_histogram`, `from_parts`, `to_dense`, `to_cumulative` |
+| `CumulativeHistogram` | Read-only cumulative form (crate's `CumulativeROHistogram`); binary-search `percentile(s)`, `mean`, `bucket_quantile_range`, `iter_with_quantiles` |
 | `Bucket` | A bucket's `count` and inclusive `[start, end]` range, plus `midpoint`/`width` |
 | `h2histogram.arrow` | Read/write the Rezolus Arrow/Parquet layout |
 

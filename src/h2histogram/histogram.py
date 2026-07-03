@@ -320,6 +320,12 @@ class Histogram:
 
         return SparseHistogram.from_histogram(self)
 
+    def to_cumulative(self) -> "CumulativeHistogram":
+        """Convert to a read-only cumulative histogram for fast quantiles."""
+        from .cumulative import CumulativeHistogram
+
+        return CumulativeHistogram.from_histogram(self)
+
     # ------------------------------------------------------------------
     # Misc
     # ------------------------------------------------------------------

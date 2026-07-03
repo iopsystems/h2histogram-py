@@ -21,6 +21,7 @@ Reading histograms from a Rezolus parquet file (requires the ``parquet`` extra):
 
 from .bucket import Bucket
 from .config import Config
+from .cumulative import CumulativeHistogram
 from .histogram import Histogram
 from .sparse import SparseHistogram
 
@@ -29,6 +30,7 @@ __version__ = "0.1.0"
 __all__ = [
     "Bucket",
     "Config",
+    "CumulativeHistogram",
     "Histogram",
     "SparseHistogram",
     "__version__",
