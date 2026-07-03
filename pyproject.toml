@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "h2histogram"
+version = "0.1.0"
+description = "Python implementation of the iopsystems h2 histogram, interoperable with Rezolus"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "iopsystems" }]
+keywords = ["histogram", "h2histogram", "rezolus", "telemetry", "quantile", "parquet"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Monitoring",
+    "Intended Audience :: Developers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=10.0.0"]
+numpy = ["numpy>=1.21"]
+dev = ["pyarrow>=10.0.0", "numpy>=1.21", "pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/iopsystems/h2histogram-py"
+Reference = "https://github.com/iopsystems/histogram"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/h2histogram"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
