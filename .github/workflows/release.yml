@@ -1,0 +1,61 @@
+name: Release
+
+# Publishes to PyPI when a GitHub Release is published, using PyPI Trusted
+# Publishing (OIDC) — no API tokens or secrets to manage.
+#
+# One-time PyPI setup (https://docs.pypi.org/trusted-publishers/):
+#   Project → Settings → Publishing → "Add a new pending publisher" with:
+#     Owner:            iopsystems
+#     Repository name:  h2histogram-py
+#     Workflow name:    release.yml
+#     Environment name: pypi
+#
+# Then, to cut a release: bump `version` in pyproject.toml, tag it, and publish
+# a GitHub Release for that tag — this workflow builds and uploads the artifacts.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+      - name: Check metadata
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment name here must match the Trusted Publisher config on PyPI.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/h2histogram/
+    permissions:
+      id-token: write  # required for OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
