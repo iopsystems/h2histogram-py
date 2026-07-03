@@ -150,6 +150,18 @@ The bucketing math is verified against the exact assertions from the Rust crate'
 own unit tests (`src/config.rs`), and the NumPy bulk-record fast path is checked
 against the scalar path across the full `u64` range. Run `pytest` to see for yourself.
 
+## Related implementations
+
+The h2 histogram bucketing is implemented in several languages, all producing
+byte-for-byte identical buckets so histograms interoperate across them:
+
+- [**Rust**](https://github.com/iopsystems/histogram) — the canonical
+  implementation (`histogram` crate)
+- [**Python**](https://github.com/iopsystems/h2histogram-py) — this repository
+- [**Go**](https://github.com/iopsystems/h2histogram-go)
+- [**JavaScript**](https://github.com/iopsystems/h2histogram-js) (values up to
+  `2^53 - 1`)
+
 ## Releasing
 
 Releases are published to PyPI automatically via GitHub Actions trusted
