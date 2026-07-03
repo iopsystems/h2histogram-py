@@ -1,5 +1,10 @@
 # h2histogram-py
 
+[![PyPI version](https://img.shields.io/pypi/v/h2histogram.svg)](https://pypi.org/project/h2histogram/)
+[![Python versions](https://img.shields.io/pypi/pyversions/h2histogram.svg)](https://pypi.org/project/h2histogram/)
+[![CI](https://github.com/iopsystems/h2histogram-py/actions/workflows/ci.yml/badge.svg)](https://github.com/iopsystems/h2histogram-py/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A pure-Python implementation of the [iopsystems h2 histogram](https://github.com/iopsystems/histogram).
 
 `h2histogram` produces histograms with **byte-for-byte identical bucketing** to the
@@ -144,6 +149,11 @@ See the runnable examples in [`examples/`](examples):
 The bucketing math is verified against the exact assertions from the Rust crate's
 own unit tests (`src/config.rs`), and the NumPy bulk-record fast path is checked
 against the scalar path across the full `u64` range. Run `pytest` to see for yourself.
+
+## Releasing
+
+Releases are published to PyPI automatically via GitHub Actions trusted
+publishing. See [RELEASING.md](RELEASING.md) for the steps.
 
 ## License
 
