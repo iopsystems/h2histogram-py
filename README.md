@@ -159,6 +159,7 @@ byte-for-byte identical buckets so histograms interoperate across them:
   implementation (`histogram` crate)
 - [**Python**](https://github.com/iopsystems/h2histogram-py) — this repository
 - [**Go**](https://github.com/iopsystems/h2histogram-go)
+- [**Java**](https://github.com/iopsystems/h2histogram-java)
 - [**JavaScript**](https://github.com/iopsystems/h2histogram-js) (values up to
   `2^53 - 1`)
 
