@@ -16,11 +16,11 @@ computed once at construction.
 from __future__ import annotations
 
 import bisect
-import math
 from typing import Iterator, List, Optional, Sequence, Tuple
 
 from .bucket import Bucket
 from .config import Config
+from . import _analytics as analytics
 
 __all__ = ["CumulativeHistogram"]
 
@@ -44,8 +44,8 @@ class CumulativeHistogram:
         _validate: bool = True,
     ) -> None:
         self._config = config
-        self._index: List[int] = list(index)
-        self._count: List[int] = list(count)
+        self._index: List[int] = [analytics.integer(i, "indices") for i in index]
+        self._count: List[int] = [analytics.integer(n, "counts") for n in count]
         if _validate:
             self._validate()
         self._mean = self._compute_mean()
@@ -71,15 +71,16 @@ class CumulativeHistogram:
     @classmethod
     def from_histogram(cls, histogram) -> "CumulativeHistogram":
         """Build from a dense :class:`~h2histogram.histogram.Histogram`."""
+        histogram._validate_storage()
         index: List[int] = []
         count: List[int] = []
         running = 0
         for i, n in enumerate(histogram.buckets):
             if n:
-                running += n
+                running += int(n)
                 index.append(i)
                 count.append(running)
-        return cls(histogram.config, index, count, _validate=False)
+        return cls(histogram.config, index, count)
 
     @classmethod
     def from_sparse(cls, sparse) -> "CumulativeHistogram":
@@ -88,31 +89,15 @@ class CumulativeHistogram:
         cumulative: List[int] = []
         running = 0
         for n in sparse.count:
-            running += n
+            running += int(n)
             cumulative.append(running)
-        return cls(sparse.config, index, cumulative, _validate=False)
+        return cls(sparse.config, index, cumulative)
 
     # ------------------------------------------------------------------
     # Validation / mean
     # ------------------------------------------------------------------
     def _validate(self) -> None:
-        if len(self._index) != len(self._count):
-            raise ValueError("index and count must have the same length")
-        total_buckets = self._config.total_buckets
-        prev = -1
-        for i in self._index:
-            if i < 0 or i >= total_buckets:
-                raise ValueError(f"index {i} out of range for config")
-            if i <= prev:
-                raise ValueError("indices must be strictly ascending")
-            prev = i
-        prev_c: Optional[int] = None
-        for c in self._count:
-            if c == 0:
-                raise ValueError("cumulative counts must be non-zero")
-            if prev_c is not None and c < prev_c:
-                raise ValueError("cumulative counts must be non-decreasing")
-            prev_c = c
+        analytics.validate_parts(self._config, self._index, self._count, cumulative=True)
 
     def _individual_count(self, position: int) -> int:
         if position == 0:
@@ -130,8 +115,8 @@ class CumulativeHistogram:
             individual = self._individual_count(i)
             start, end = self._config.index_to_range(self._index[i])
             midpoint = (start + end) / 2.0
-            weighted += midpoint * individual
-        return weighted / total
+            weighted += midpoint * (individual / total)
+        return weighted
 
     # ------------------------------------------------------------------
     # Accessors
@@ -142,13 +127,13 @@ class CumulativeHistogram:
 
     @property
     def index(self) -> List[int]:
-        """Non-zero bucket indices, ascending."""
-        return self._index
+        """A copy of the stored bucket indices, ascending."""
+        return self._index.copy()
 
     @property
     def count(self) -> List[int]:
-        """Cumulative (prefix-sum) counts aligned with :attr:`index`."""
-        return self._count
+        """A copy of cumulative counts; modifying it cannot stale the cached mean."""
+        return self._count.copy()
 
     def __len__(self) -> int:
         return len(self._index)
@@ -180,36 +165,34 @@ class CumulativeHistogram:
         The returned bucket carries the **individual** (non-cumulative) count.
         Returns ``None`` if the histogram is empty.
         """
-        result = self.percentiles([percentile])
-        if result is None:
-            return None
-        return result[0][1]
-
-    def percentiles(
-        self, percentiles: Sequence[float]
-    ) -> Optional[List[Tuple[float, Bucket]]]:
-        """Return ``(percentile, Bucket)`` pairs, one per requested percentile.
-
-        Each percentile must be in ``[0.0, 1.0]``. Returns ``None`` if empty.
-        """
-        for p in percentiles:
-            if not 0.0 <= p <= 1.0:
-                raise ValueError("percentiles must be in the range [0.0, 1.0]")
+        analytics.validate_percentile(percentile)
         if not self._count:
             return None
-        total = self._count[-1]
-        if total == 0:
-            return None
+        pos = self._find_quantile_position(analytics.rank(percentile, self._count[-1]))
+        return analytics.bucket(self._config, self._index[pos], self._individual_count(pos))
 
-        out: List[Tuple[float, Bucket]] = []
+    def percentiles_into(self, percentiles, output) -> bool:
+        """Binary-search each request into caller Bucket/None slots.
+
+        No sorting or dense reconstruction. Selected Bucket objects still allocate.
+        Invalid requests or short output leave the list unchanged.
+        """
+        if percentiles is output:
+            raise ValueError("requests and output cannot alias")
         for p in percentiles:
-            target = max(1, int(math.ceil(p * total)))
-            pos = self._find_quantile_position(target)
-            start, end = self._config.index_to_range(self._index[pos])
-            out.append(
-                (p, Bucket(count=self._individual_count(pos), start=start, end=end))
-            )
-        return out
+            analytics.validate_percentile(p)
+        if len(output) < len(percentiles):
+            raise ValueError("output must have at least one slot per percentile")
+        for i, p in enumerate(percentiles):
+            output[i] = self.percentile(p)
+        return bool(self._count)
+
+    def percentiles(self, percentiles):
+        """Return (percentile, Bucket) pairs in request order, or None if empty."""
+        output = [None] * len(percentiles)
+        if not self.percentiles_into(percentiles, output):
+            return None
+        return list(zip(percentiles, output))
 
     def quantile(self, quantile: float) -> Optional[Bucket]:
         """Alias for :meth:`percentile`."""
@@ -267,6 +250,48 @@ class CumulativeHistogram:
         for i in range(len(self._index)):
             h.buckets[self._index[i]] = self._individual_count(i)
         return h
+
+    def _pairs(self):
+        previous = 0
+        for index, count in zip(self._index, self._count):
+            yield index, count - previous
+            previous = count
+
+    @classmethod
+    def _from_pairs(cls, config, pairs):
+        indices, cumulative = [], []
+        running = 0
+        for index, count in pairs:
+            if count:
+                running += count
+                indices.append(index)
+                cumulative.append(running)
+        return cls(config, indices, cumulative)
+
+    def to_sparse(self):
+        """Copy individual counts to sparse storage without dense reconstruction."""
+        from .sparse import SparseHistogram
+        return SparseHistogram._from_pairs(self._config, self._pairs())
+
+    def merge(self, other: "CumulativeHistogram") -> "CumulativeHistogram":
+        """Merge sorted individual counts, then compute new prefixes and mean."""
+        if self._config != other._config:
+            raise ValueError("histograms have incompatible configurations")
+        return self._from_pairs(self._config,
+                                analytics.merge_pairs(self._pairs(), other._pairs()))
+
+    def downsample(self, grouping_power: int) -> "CumulativeHistogram":
+        """Coalesce onto a coarser grid, recomputing the midpoint-estimated mean."""
+        config, pairs = analytics.downsample_pairs(self._config, self._pairs(), grouping_power)
+        return self._from_pairs(config, pairs)
+
+    def shrink_to_fit(self) -> None:
+        """Rebuild snapshot lists to release optional spare interpreter capacity.
+
+        Contents and mean stay unchanged. This does not guarantee RSS reduction.
+        """
+        self._index = self._index.copy()
+        self._count = self._count.copy()
 
     # ------------------------------------------------------------------
     # Misc
