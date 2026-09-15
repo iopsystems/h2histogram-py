@@ -97,7 +97,12 @@ class Histogram:
         self.record(value, 1)
 
     def record(self, value: int, count: int = 1) -> None:
-        """Add ``count`` observations of ``value``."""
+        """Add ``count`` observations of ``value``.
+
+        The unchecked hot path requires a non-negative Python int count and
+        Python int bucket storage. Convert external scalar types with int(), or
+        use record_many with weights to validate/normalize integer-like counts.
+        """
         index = self._config.value_to_index(value)
         self._buckets[index] += count
 
@@ -106,12 +111,17 @@ class Histogram:
 
         If ``counts`` is provided it must be the same length as ``values`` and
         supplies a weight for each value; otherwise each value counts once.
+        Weights are validated non-negative integer objects and normalized to
+        Python ints before addition; prior entries remain recorded on error.
 
         Uses NumPy for a vectorized fast path when it is installed and ``counts``
         is omitted; otherwise falls back to a simple loop.
         """
         if counts is not None:
             for value, count in zip(values, counts):
+                count = analytics.integer(count, "counts")
+                if count < 0:
+                    raise ValueError("counts must be non-negative")
                 self.record(value, count)
             return
 
@@ -173,8 +183,9 @@ class Histogram:
             )
 
         counts = np.bincount(indices, minlength=cfg.total_buckets)
-        existing = np.asarray(self._buckets, dtype=np.int64)
-        self._buckets = (existing + counts).tolist()
+        # NumPy computes this batch only; retained counters stay unbounded.
+        for index in np.flatnonzero(counts):
+            self._buckets[int(index)] += int(counts[index])
 
     # ------------------------------------------------------------------
     # Iteration
@@ -216,7 +227,7 @@ class Histogram:
         self._check_compatible(destination)
         self._validate_storage()
         destination._validate_storage()
-        destination._buckets[:] = self._buckets
+        destination._buckets[:] = [int(n) for n in self._buckets]
 
     def drain_into(self, destination: "Histogram") -> None:
         """Snapshot then reset. Not atomic; source and destination must differ."""
@@ -273,7 +284,8 @@ class Histogram:
         """
         self._check_compatible(other)
         return Histogram._from_valid_buckets(self._config,
-            [a + b for a, b in zip(self._buckets, other._buckets)])
+            [analytics.integer(a, "counts") + analytics.integer(b, "counts")
+             for a, b in zip(self._buckets, other._buckets)])
 
     def __add__(self, other: "Histogram") -> "Histogram":
         return self.merge(other)

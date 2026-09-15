@@ -143,9 +143,21 @@ remains a mutable escape hatch: preserve its configured length and use
 non-negative Python integer counts. Raw mutation and recording are not validated
 on every write; imported storage and the new checked lifecycle APIs are validated.
 
+The unchecked scalar `record`/`increment` path requires Python integer bucket
+storage and counts; convert NumPy scalar weights using `int(weight)` first.
+Weighted `record_many` validates and normalizes integer-like weights before
+addition, so NumPy weights do not narrow counters. The unweighted NumPy path
+computes batch bucket counts, then adds them to existing Python integers without
+casting retained counters to a fixed-width array. Copies through `snapshot_into`
+and `drain_into` normalize integer-like source counters without changing the
+source in place. Validation alone cannot recover counts already wrapped by an
+unsupported scalar write.
+
 Python counts remain arbitrary-precision integers. Integer-like imported counts
-(such as NumPy `uint64`) are normalized to Python integers; zero sparse entries are omitted after validation, and fractional or negative
-counts are rejected instead of silently coerced. Totals beyond `2**53` use integer
+(such as NumPy `uint64`) are normalized to Python integers; zero sparse entries are omitted after validation. Boolean and floating-point
+counts (including integral floats such as `5.0`) are rejected, as are negative
+counts. Percentiles are numeric fractions; Python booleans follow their numeric
+values zero and one. Totals beyond `2**53` use integer
 rank arithmetic for the supplied binary floating-point percentile; ordinary-size
 ranks retain the existing floating-point rounding behavior. Percentiles zero and
 one select the first and last populated buckets exactly, even with huge totals.

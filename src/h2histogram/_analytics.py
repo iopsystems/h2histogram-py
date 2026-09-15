@@ -14,6 +14,8 @@ def validate_config(config):
 
 
 def integer(value, label):
+    if isinstance(value, bool):
+        raise TypeError(label + " must contain non-boolean integers")
     try:
         return operator.index(value)
     except TypeError:

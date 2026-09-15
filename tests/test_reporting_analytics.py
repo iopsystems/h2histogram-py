@@ -216,3 +216,58 @@ def test_request_buffer_cannot_alias_output(form):
     with pytest.raises(ValueError):
         form(populated()).percentiles_into(requests, requests)
     assert requests == [1., .5, 0.]
+
+
+def test_weighted_numpy_recording_and_snapshot_counts_stay_unbounded():
+    np = pytest.importorskip('numpy')
+    a, b = Histogram(0, 1), Histogram(0, 1)
+    for h in (a, b):
+        h.record_many([0], np.array([2**63], dtype=np.uint64))
+    assert a.merge(b).buckets == [2**64, 0]
+    a.record_many([0], np.array([2**63], dtype=np.uint64))
+    assert a.buckets == [2**64, 0]
+    h = Histogram(0, 1)
+    h.record_many([0, 0], np.array([2**64 - 1, 1], dtype=np.uint64))
+    assert h.buckets == [2**64, 0]
+    # Integer-like raw storage is normalized when copied, without editing source.
+    h.buckets[0] = np.uint64(2**63)
+    dst = Histogram(0, 1)
+    h.snapshot_into(dst)
+    assert type(dst.buckets[0]) is int
+    assert h.merge(h).buckets == [2**64, 0]
+
+
+@pytest.mark.parametrize('bad', [True, False, 5.0])
+def test_import_counts_require_non_boolean_integer_objects(bad):
+    with pytest.raises(TypeError): Histogram.from_buckets(0, 1, [bad, 0])
+    with pytest.raises(TypeError): SparseHistogram.from_parts(Config.new(0, 1), [0], [bad])
+    with pytest.raises(TypeError): CumulativeHistogram.from_parts(Config.new(0, 1), [0], [bad])
+
+
+def test_arrow_boolean_counts_rejected():
+    pa = pytest.importorskip('pyarrow')
+    from h2histogram.arrow import read_histograms
+    with pytest.raises(TypeError):
+        read_histograms(pa.table({'latency:buckets': [[True, False]]}),
+                        'latency', grouping_power=0, max_value_power=1)
+
+
+def test_large_rank_uses_supplied_binary_float_without_product_rounding():
+    # ceil(float(.7) * total) rounds to first_count, but the exact rank is next.
+    total = 2**53 + 1
+    p = .7
+    numerator, denominator = p.as_integer_ratio()
+    target = (numerator * total + denominator - 1) // denominator
+    h = Histogram.from_buckets(0, 1, [target - 1, total - target + 1])
+    for obj in (h, h.to_sparse(), h.to_cumulative()):
+        assert obj.percentile(p).start == 1
+
+
+def test_unweighted_numpy_bulk_recording_never_narrows_existing_counts():
+    pytest.importorskip('numpy')
+    for count in (2**63 - 1, 2**63, 10**400):
+        h = Histogram.from_buckets(0, 1, [count, 0])
+        storage = h.buckets
+        h.record_many([0, 1, 0])
+        assert h.buckets == [count + 2, 1]
+        assert h.buckets is storage
