@@ -11,6 +11,7 @@ from typing import Iterator, List, Optional, Sequence, Tuple
 
 from .bucket import Bucket
 from .config import Config
+from . import _analytics as analytics
 
 __all__ = ["SparseHistogram"]
 
@@ -27,8 +28,12 @@ class SparseHistogram:
         count: Optional[Sequence[int]] = None,
     ) -> None:
         self._config = config
-        self._index: List[int] = list(index) if index is not None else []
-        self._count: List[int] = list(count) if count is not None else []
+        self._index: List[int] = [analytics.integer(i, "indices") for i in index] if index is not None else []
+        self._count: List[int] = [analytics.integer(n, "counts") for n in count] if count is not None else []
+        analytics.validate_parts(config, self._index, self._count)
+        occupied = [(i, n) for i, n in zip(self._index, self._count) if n]
+        self._index = [i for i, _ in occupied]
+        self._count = [n for _, n in occupied]
 
     # ------------------------------------------------------------------
     # Constructors
@@ -36,6 +41,7 @@ class SparseHistogram:
     @classmethod
     def from_histogram(cls, histogram) -> "SparseHistogram":
         """Build a sparse histogram from a dense :class:`Histogram`."""
+        histogram._validate_storage()
         index: List[int] = []
         count: List[int] = []
         for i, c in enumerate(histogram.buckets):
@@ -56,16 +62,6 @@ class SparseHistogram:
         Raises :class:`ValueError` if the lengths differ, an index is out of
         range, or the indices are not strictly ascending.
         """
-        if len(index) != len(count):
-            raise ValueError("index and count must have the same length")
-        total = config.total_buckets
-        prev = -1
-        for i in index:
-            if i < 0 or i >= total:
-                raise ValueError(f"index {i} out of range for config")
-            if i <= prev:
-                raise ValueError("indices must be strictly ascending")
-            prev = i
         return cls(config, index, count)
 
     # ------------------------------------------------------------------
@@ -77,13 +73,13 @@ class SparseHistogram:
 
     @property
     def index(self) -> List[int]:
-        """Non-zero bucket indices, ascending."""
-        return self._index
+        """A copy of the stored bucket indices, ascending."""
+        return self._index.copy()
 
     @property
     def count(self) -> List[int]:
-        """Counts corresponding to :attr:`index`."""
-        return self._count
+        """A copy of counts corresponding to :attr:`index`."""
+        return self._count.copy()
 
     def __len__(self) -> int:
         return len(self._index)
@@ -122,13 +118,55 @@ class SparseHistogram:
     # Percentiles
     # ------------------------------------------------------------------
     def percentile(self, percentile: float) -> Optional[Bucket]:
-        """Compute a percentile via the dense representation."""
-        return self.to_dense().percentile(percentile)
+        """Scan stored counts directly, without reconstructing a dense histogram."""
+        return analytics.scalar(self._config, zip(self._index, self._count),
+                                self.total_count(), percentile)
 
-    def percentiles(
-        self, percentiles: Sequence[float]
-    ) -> Optional[List[Tuple[float, Bucket]]]:
-        return self.to_dense().percentiles(percentiles)
+    def percentiles_into(self, percentiles, output) -> bool:
+        """Fill caller Bucket/None slots in request order; return nonempty.
+
+        The output list is reused; Bucket objects and request-order scratch may
+        allocate. Invalid requests or short output leave the list unchanged.
+        """
+        return analytics.batch_into(self._config, zip(self._index, self._count),
+                                    self.total_count(), percentiles, output)
+
+    def percentiles(self, percentiles):
+        output = [None] * len(percentiles)
+        if not self.percentiles_into(percentiles, output):
+            return None
+        return list(zip(percentiles, output))
+
+    @classmethod
+    def _from_pairs(cls, config, pairs):
+        indices, counts = [], []
+        for index, count in pairs:
+            if count:
+                indices.append(index)
+                counts.append(count)
+        return cls(config, indices, counts)
+
+    def merge(self, other: "SparseHistogram") -> "SparseHistogram":
+        """Merge sorted counts into independent sparse storage in O(n + m)."""
+        if self._config != other._config:
+            raise ValueError("histograms have incompatible configurations")
+        return self._from_pairs(self._config, analytics.merge_pairs(
+            zip(self._index, self._count), zip(other._index, other._count)))
+
+    def downsample(self, grouping_power: int) -> "SparseHistogram":
+        """Coalesce stored buckets on a coarser grid without dense storage."""
+        config, pairs = analytics.downsample_pairs(
+            self._config, zip(self._index, self._count), grouping_power)
+        return self._from_pairs(config, pairs)
+
+    def shrink_to_fit(self) -> None:
+        """Rebuild owned lists to release optional interpreter spare capacity.
+
+        This is an explicit retention operation, not an RSS or allocator-release
+        guarantee. Old and new list storage coexist during each copy.
+        """
+        self._index = self._index.copy()
+        self._count = self._count.copy()
 
     # ------------------------------------------------------------------
     # Misc

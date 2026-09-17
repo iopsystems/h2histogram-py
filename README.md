@@ -77,6 +77,107 @@ for bucket, lo, hi in c.iter_with_quantiles():
     ...                         # each non-zero bucket with its quantile span
 ```
 
+## Choose by phase
+
+| Phase | Priorities | Starting representation |
+|---|---|---|
+| Update | Cheap recording; bounded bucket geometry | Dense `Histogram` |
+| Report in place | Reuse storage; query a few percentiles per interval | Dense, with `percentiles_into` and `snapshot_into` / `drain_into` |
+| Report offline | Repeated quantiles and cached midpoint mean | `CumulativeHistogram`; amortize conversion across reads |
+| Analytics | Merge/downsample occupied buckets; retain compact snapshots | Sparse or cumulative when occupancy is low; dense when most buckets are occupied |
+
+Recording still only changes bucket counts: no cached total, minimum, maximum, or
+mean is maintained on the write path. These classes do not synchronize concurrent
+writers or readers. Coordinate access externally, or give each writer its own
+histogram and merge snapshots at the interval boundary. The GIL does not make a
+multi-step snapshot-and-reset atomic.
+
+### Interval reporting and owned merges
+
+```python
+active = Histogram(7, 30)
+snapshot = Histogram(7, 30)
+active.record(42)
+active.snapshot_into(snapshot)  # overwrite reusable destination; keep active counts
+active.drain_into(snapshot)     # overwrite destination, then reset active counts
+active.reset()                 # clear counts, retaining the same bucket list
+
+combined = Histogram.checked_sum([snapshot, snapshot])  # independent owned result
+snapshot.checked_add_assign(combined)                   # reuse destination storage
+queries = [0.99, 0.5, 1.0, 0.5]                          # order/duplicates preserved
+output = [None] * len(queries)
+if snapshot.percentiles_into(queries, output):
+    print(output[0])  # Bucket; each slot corresponds to the same query position
+```
+
+`checked_sum` requires at least one input and matching configurations. It copies
+the first input and adds the others to private output; it does not repeatedly use
+the transactional in-place API. `checked_add_assign` validates all counts before
+changing its destination. Configuration or count validation failures preserve
+inputs. A self-snapshot is allowed; a self-drain is rejected. These operations
+require exclusive access to the histograms involved.
+
+All three representations provide a direct `percentile` query and
+`percentiles_into`. The latter requires at least one output slot per request,
+validates requests/capacity before writing, leaves extra slots untouched, and
+returns `False` for an empty histogram after filling requested slots with `None`.
+Requests and output must be separate lists.
+It reuses the output list but still allocates `Bucket` objects; dense/sparse batch
+queries also allocate sorting scratch and scan occupied counts in query order.
+Cumulative queries use binary search. Invalid percentiles, including NaN, fail
+even for an empty histogram.
+
+### Native snapshot analytics
+
+Sparse and cumulative snapshots support `merge` and `downsample` without dense
+reconstruction. Merge requires matching configurations; downsampling requires a
+strictly lower grouping power. Both return independent snapshots, preserve count
+mass, and recompute cumulative means for the resulting geometry.
+`CumulativeHistogram.to_sparse()` decumulates directly. `shrink_to_fit()` copies
+snapshot columns to discard spare list capacity where the Python implementation
+supports it; it allocates temporarily and does not guarantee lower process RSS.
+
+Snapshot `index` and `count` properties return copies. Mutating those returned
+lists no longer edits a snapshot or invalidates its cached mean. Dense `buckets`
+remains a mutable escape hatch: preserve its configured length and use
+non-negative Python integer counts. Raw mutation and recording are not validated
+on every write; imported storage and the new checked lifecycle APIs are validated.
+
+The unchecked scalar `record`/`increment` path requires Python integer bucket
+storage and counts; convert NumPy scalar weights using `int(weight)` first.
+Weighted `record_many` validates and normalizes integer-like weights before
+addition, so NumPy weights do not narrow counters. The unweighted NumPy path
+computes batch bucket counts, then adds them to existing Python integers without
+casting retained counters to a fixed-width array. Copies through `snapshot_into`
+and `drain_into` normalize integer-like source counters without changing the
+source in place. Validation alone cannot recover counts already wrapped by an
+unsupported scalar write.
+
+Python counts remain arbitrary-precision integers. Integer-like imported counts
+(such as NumPy `uint64`) are normalized to Python integers; zero sparse entries are omitted after validation. Boolean and floating-point
+counts (including integral floats such as `5.0`) are rejected, as are negative
+counts. Percentiles are numeric fractions; Python booleans follow their numeric
+values zero and one. Totals beyond `2**53` use integer
+rank arithmetic for the supplied binary floating-point percentile; ordinary-size
+ranks retain the existing floating-point rounding behavior. Percentiles zero and
+one select the first and last populated buckets exactly, even with huge totals.
+Arrow/Rezolus export still uses `UInt64`, so Python counts outside that range
+cannot be represented in that interchange format.
+
+### Benchmark the phases separately
+
+```bash
+PYTHONPATH=src python benchmarks/reporting.py --grouping-power 7 --occupancy few
+PYTHONPATH=src python benchmarks/reporting.py --grouping-power 10 --occupancy full
+```
+
+The dependency-free harness prepares inputs before timing and emits CSV with
+repeat medians/ranges. It separates scalar/batch reporting, reusable lifecycle
+operations, owned merges, snapshot conversion, and native analytics. Allocating
+cases include result destruction; reset-plus-add is labeled as a combined
+operation. It does not measure recording throughput or process memory, and its
+Python timings should not be compared directly with another language's harness.
+
 ## Reading histograms from a Rezolus Parquet file
 
 Rezolus writes one row per sample interval. Histogram metrics are stored as a dense
