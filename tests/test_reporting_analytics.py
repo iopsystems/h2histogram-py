@@ -271,3 +271,23 @@ def test_unweighted_numpy_bulk_recording_never_narrows_existing_counts():
         h.record_many([0, 1, 0])
         assert h.buckets == [count + 2, 1]
         assert h.buckets is storage
+
+
+@pytest.mark.parametrize('values,counts', [([0, 1], [2]), ([0], [2, 3]), ([], [2]), ([0], [])])
+@pytest.mark.parametrize('iterators', [False, True])
+def test_weighted_recording_rejects_length_mismatch(values, counts, iterators):
+    h = Histogram(0, 1)
+    expected = [2, 0] if values and counts else [0, 0]
+    if iterators:
+        values, counts = iter(values), iter(counts)
+    with pytest.raises(ValueError, match='same length'):
+        h.record_many(values, counts)
+    # Streaming recording retains any complete pair before the mismatch.
+    assert h.buckets == expected
+
+
+def test_weighted_recording_equal_empty_and_generator_inputs():
+    h = Histogram(0, 1)
+    h.record_many(iter([]), iter([]))
+    h.record_many((v for v in [0, 1]), (n for n in [2, 3]))
+    assert h.buckets == [2, 3]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import zip_longest
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 
 from .bucket import Bucket
@@ -113,12 +114,16 @@ class Histogram:
         supplies a weight for each value; otherwise each value counts once.
         Weights are validated non-negative integer objects and normalized to
         Python ints before addition; prior entries remain recorded on error.
+        Unequal lengths raise ValueError when either iterator is exhausted.
 
         Uses NumPy for a vectorized fast path when it is installed and ``counts``
         is omitted; otherwise falls back to a simple loop.
         """
         if counts is not None:
-            for value, count in zip(values, counts):
+            missing = object()
+            for value, count in zip_longest(values, counts, fillvalue=missing):
+                if value is missing or count is missing:
+                    raise ValueError("values and counts must have the same length")
                 count = analytics.integer(count, "counts")
                 if count < 0:
                     raise ValueError("counts must be non-negative")

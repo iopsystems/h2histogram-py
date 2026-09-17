@@ -12,6 +12,10 @@ The unweighted NumPy bulk path now adds batch counts to Python integers rather
 than narrowing existing counters to int64; this fixes signed overflow and permits
 existing counts above the u64 range. It retains the dense list.
 
+Weighted `record_many` rejects mismatched value/count lengths, including lazy
+iterators, rather than silently truncating. Complete pairs before an error remain
+recorded; the operation does not materialize inputs or roll back the batch.
+
 ### Compatibility changes
 
 - Imported counts/indices must be integer objects; boolean and floating-point
