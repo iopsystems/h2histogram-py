@@ -5,7 +5,7 @@
 [![CI](https://github.com/iopsystems/h2histogram-py/actions/workflows/ci.yml/badge.svg)](https://github.com/iopsystems/h2histogram-py/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A pure-Python implementation of the [iopsystems h2 histogram](https://github.com/iopsystems/histogram).
+A pure-Python implementation of the [h2histogram design](https://github.com/iopsystems/histogram).
 
 `h2histogram` produces histograms with **byte-for-byte identical bucketing** to the
 Rust `histogram` crate, so histograms recorded here can be consumed by
@@ -13,9 +13,9 @@ Rust `histogram` crate, so histograms recorded here can be consumed by
 Parquet/Arrow column of h2histogram values produced by Rezolus and analyze it in
 Python.
 
-## What is an h2 histogram?
+## What is h2histogram?
 
-An h2 histogram quantizes values into buckets using two parameters:
+h2histogram quantizes values into buckets using two parameters:
 
 - **`grouping_power`** — the number of buckets spanning each power of two. It sets
   the relative error to `2^-grouping_power` (e.g. `grouping_power=7` → ~0.78% error).
@@ -253,7 +253,7 @@ against the scalar path across the full `u64` range. Run `pytest` to see for you
 
 ## Related implementations
 
-The h2 histogram bucketing is implemented in several languages, all producing
+The h2histogram bucketing is implemented in several languages, all producing
 byte-for-byte identical buckets so histograms interoperate across them:
 
 - [**Rust**](https://github.com/iopsystems/histogram) — the canonical
